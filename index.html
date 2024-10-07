@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shittier Game</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.55.2/dist/phaser.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: pink;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        @keyframes flash {
+            0% { color: red; }
+            25% { color: yellow; }
+            50% { color: blue; }
+            75% { color: green; }
+            100% { color: purple; }
+        }
+        @keyframes violentShake {
+            0% { transform: translate(0, 0) rotate(0deg); }
+            25% { transform: translate(-5px, 5px) rotate(5deg); }
+            50% { transform: translate(5px, -5px) rotate(-5deg); }
+            75% { transform: translate(-3px, -3px) rotate(3deg); }
+            100% { transform: translate(3px, 3px) rotate(-3deg); }
+        }
+        h1 {
+            position: absolute;
+            top: 10px;
+            font-size: 24px;
+            animation: flash 0.5s linear infinite, violentShake 0.1s linear infinite;
+        }
+    </style>
+</head>
+<body>
+    <h1>Shittier Game</h1>
+    <script>
+        const config = {
+            type: Phaser.AUTO,
+            width: window.innerWidth,
+            height: window.innerHeight,
+            backgroundColor: '#FF00FF',
+            physics: {
+                default: 'arcade',
+                arcade: {
+                    gravity: { y: 0 }
+                }
+            },
+            scene: {
+                preload: preload,
+                create: create,
+                update: update
+            }
+        };
+
+        const game = new Phaser.Game(config);
+
+        let players = [];
+        let player;
+        let cursors;
+        let bullets;
+        let lastFired = 0;
+        let enemyCountText;
+
+        let audioContext;
+        let shootSound;
+        let hitSound;
+        let winSound;
+        let backgroundSound;
+        let playerMoveSound;
+        let enemyDeathSound;
+
+        function preload() {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            shootSound = createRealisticSound(audioContext, 'shoot');
+            hitSound = createRealisticSound(audioContext, 'hit');
+            winSound = createRealisticSound(audioContext, 'win');
+            backgroundSound = createRealisticBackgroundSound(audioContext);
+            playerMoveSound = createRealisticSound(audioContext, 'playerMove');
+            enemyDeathSound = createRealisticSound(audioContext, 'enemyDeath');
+        }
+
+        function createRealisticSound(context, type) {
+            return {
+                play: function() {
+                    if (type === 'shoot') {
+                        const bufferSize = context.sampleRate * 0.1;
+                        const buffer = context.createBuffer(1, bufferSize, context.sampleRate);
+                        const data = buffer.getChannelData(0);
+                        for (let i = 0; i < bufferSize; i++) {
+                            data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 2);
+                        }
+                        const noise = context.createBufferSource();
+                        noise.buffer = buffer;
+
+                        const filter = context.createBiquadFilter();
+                        filter.type = 'bandpass';
+                        filter.frequency.setValueAtTime(1500, context.currentTime);
+                        filter.Q.setValueAtTime(1, context.currentTime);
+
+                        const gainNode = context.createGain();
+                        gainNode.gain.setValueAtTime(0.7, context.currentTime);
+                        gainNode.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 0.1);
+
+                        noise.connect(filter);
+                        filter.connect(gainNode);
+                        gainNode.connect(context.destination);
+
+                        noise.start(context.currentTime);
+                        noise.stop(context.currentTime + 0.1);
+                    } else if (type === 'hit') {
+                        const bufferSize = context.sampleRate * 0.2;
+                        const buffer = context.createBuffer(1, bufferSize, context.sampleRate);
+                        const data = buffer.getChannelData(0);
+                        for (let i = 0; i < bufferSize; i++) {
+                            data[i] = (Math.random() * 2 - 1) * Math.exp(-3 * i / bufferSize);
+                        }
+                        const noise = context.createBufferSource();
+                        noise.buffer = buffer;
+
+                        const filter = context.createBiquadFilter();
+                        filter.type = 'lowpass';
+                        filter.frequency.setValueAtTime(500, context.currentTime);
+                        filter.Q.setValueAtTime(1, context.currentTime);
+
+                        const gainNode = context.createGain();
+                        gainNode.gain.setValueAtTime(0.8, context.currentTime);
+                        gainNode.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 0.2);
+
+                        noise.connect(filter);
+                        filter.connect(gainNode);
+                        gainNode.connect(context.destination);
+
+                        noise.start(context.currentTime);
+                        noise.stop(context.currentTime + 0.2);
+                    } else if (type === 'win') {
+                        const frequencies = [261.63, 329.63, 392.00];
+                        frequencies.forEach((freq, index) => {
+                            const oscillator = context.createOscillator();
+                            oscillator.type = 'triangle';
+                            oscillator.frequency.setValueAtTime(freq, context.currentTime);
+
+                            const gainNode = context.createGain();
+                            gainNode.gain.setValueAtTime(0, context.currentTime);
+                            gainNode.gain.linearRampToValueAtTime(0.5, context.currentTime + 0.1);
+                            gainNode.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 2);
+
+                            oscillator.connect(gainNode);
+                            gainNode.connect(context.destination);
+
+                            oscillator.start(context.currentTime + index * 0.1);
+                            oscillator.stop(context.currentTime + 2);
+                        });
+                    } else if (type === 'playerMove') {
+                        const oscillator = context.createOscillator();
+                        oscillator.type = 'sine';
+                        oscillator.frequency.setValueAtTime(440, context.currentTime);
+                        oscillator.frequency.exponentialRampToValueAtTime(880, context.currentTime + 0.1);
+
+                        const gainNode = context.createGain();
+                        gainNode.gain.setValueAtTime(0.1, context.currentTime);
+                        gainNode.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 0.1);
+
+                        oscillator.connect(gainNode);
+                        gainNode.connect(context.destination);
+
+                        oscillator.start(context.currentTime);
+                        oscillator.stop(context.currentTime + 0.1);
+                    } else if (type === 'enemyDeath') {
+                        const oscillator = context.createOscillator();
+                        oscillator.type = 'sawtooth';
+                        oscillator.frequency.setValueAtTime(220, context.currentTime);
+                        oscillator.frequency.exponentialRampToValueAtTime(55, context.currentTime + 0.3);
+
+                        const gainNode = context.createGain();
+                        gainNode.gain.setValueAtTime(0.3, context.currentTime);
+                        gainNode.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 0.3);
+
+                        oscillator.connect(gainNode);
+                        gainNode.connect(context.destination);
+
+                        oscillator.start(context.currentTime);
+                        oscillator.stop(context.currentTime + 0.3);
+                    }
+                }
+            };
+        }
+
+        function createRealisticBackgroundSound(context) {
+            const bufferSize = 2 * context.sampleRate;
+            const buffer = context.createBuffer(1, bufferSize, context.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) {
+                data[i] = Math.random() * 2 - 1;
+            }
+
+            const noise = context.createBufferSource();
+            noise.buffer = buffer;
+            noise.loop = true;
+
+            const filter = context.createBiquadFilter();
+            filter.type = 'lowpass';
+            filter.frequency.setValueAtTime(1000, context.currentTime);
+
+            const lfo = context.createOscillator();
+            lfo.type = 'sine';
+            lfo.frequency.setValueAtTime(0.1, context.currentTime);
+
+            const lfoGain = context.createGain();
+            lfoGain.gain.setValueAtTime(500, context.currentTime);
+
+            lfo.connect(lfoGain);
+            lfoGain.connect(filter.frequency);
+
+            const gainNode = context.createGain();
+            gainNode.gain.setValueAtTime(0.2, context.currentTime);
+
+            noise.connect(filter);
+            filter.connect(gainNode);
+            gainNode.connect(context.destination);
+
+            lfo.start();
+            noise.start();
+
+            return {
+                setFrequency: function(freq) {
+                    filter.frequency.setValueAtTime(freq, context.currentTime);
+                }
+            };
+        }
+
+        function create() {
+            for (let i = 0; i < 10; i++) {
+                const graphics = this.add.graphics();
+                graphics.fillStyle(0x00FF00, 1);
+                graphics.fillCircle(0, 0, 5);
+                const texture = graphics.generateTexture('player' + i, 10, 10);
+                
+                const player = this.physics.add.image(
+                    Math.random() * config.width,
+                    Math.random() * config.height,
+                    'player' + i
+                );
+                player.setCollideWorldBounds(true);
+                player.setBounce(1, 1);
+                player.setVelocity(Phaser.Math.Between(-200, 200), Phaser.Math.Between(-200, 200));
+                players.push(player);
+                graphics.clear();
+            }
+
+            const graphics = this.add.graphics();
+            graphics.fillStyle(0x00FF00, 1);
+            graphics.fillRect(-25, -25, 50, 50);
+            graphics.fillStyle(0xFF0000, 1);
+            graphics.fillTriangle(0, -35, 25, 25, -25, 25);
+            graphics.generateTexture('player', 75, 75);
+            graphics.clear();
+
+            player = this.physics.add.sprite(config.width / 2, config.height / 2, 'player');
+            player.setCollideWorldBounds(true);
+
+            graphics.fillStyle(0xFFFF00, 1);
+            graphics.fillCircle(0, 0, 5);
+            graphics.generateTexture('bullet', 10, 10);
+            graphics.clear();
+
+            cursors = this.input.keyboard.createCursorKeys();
+            bullets = this.physics.add.group();
+
+            this.physics.add.collider(bullets, players, (bullet, ball) => {
+                bullet.destroy();
+                ball.destroy();
+                players = players.filter(p => p !== ball);
+                hitSound.play();
+                enemyDeathSound.play();
+                updateEnemyCount();
+                if (players.length === 0) {
+                    this.winEffect();
+                }
+            });
+
+            enemyCountText = this.add.text(16, 16, 'Enemies: 10', { fontSize: '32px', fill: '#FFF' });
+
+            backgroundSound.setFrequency(1000);
+        }
+
+        function updateEnemyCount() {
+            enemyCountText.setText('Enemies: ' + players.length);
+        }
+
+        function update(time) {
+            if (players.length === 0) return;
+
+            players.forEach(player => {
+                player.setTint(Math.random() * 0xFFFFFF);
+            });
+            
+            this.cameras.main.shake(100, 0.05);
+            this.cameras.main.rotation = Math.random() * 0.1 - 0.05;
+
+            player.setVelocity(0);
+
+            if (cursors.left.isDown) {
+                player.setVelocityX(-200);
+                playerMoveSound.play();
+            } else if (cursors.right.isDown) {
+                player.setVelocityX(200);
+                playerMoveSound.play();
+            }
+
+            if (cursors.up.isDown) {
+                player.setVelocityY(-200);
+                playerMoveSound.play();
+            } else if (cursors.down.isDown) {
+                player.setVelocityY(200);
+                playerMoveSound.play();
+            }
+
+            if (cursors.space.isDown && time > lastFired + 100) {
+                const bullet = bullets.create(player.x, player.y, 'bullet');
+                bullet.setVelocity(Math.random() * 400 - 200, Math.random() * 400 - 200);
+                lastFired = time;
+                shootSound.play();
+            }
+
+            bullets.children.entries.forEach(bullet => {
+                if (bullet.x < 0 || bullet.x > config.width || bullet.y < 0 || bullet.y > config.height) {
+                    bullet.destroy();
+                }
+            });
+
+            backgroundSound.setFrequency(800 + Math.sin(time / 1000) * 200);
+        }
+
+        function winEffect() {
+            winSound.play();
+            this.add.text(config.width / 2, config.height / 2, 'You Win!', { fontSize: '64px', fill: '#FFF' }).setOrigin(0.5);
+            this.physics.pause();
+            
+            const particles = this.add.particles('bullet');
+            const emitter = particles.createEmitter({
+                speed: 100,
+                scale: { start: 1, end: 0 },
+                blendMode: 'ADD'
+            });
+            
+            emitter.startFollow(player);
+            
+            this.tweens.add({
+                targets: player,
+                angle: 720,
+                scale: 2,
+                duration: 2000,
+                ease: 'Power2'
+            });
+        }
+
+        window.addEventListener('resize', () => {
+            game.scale.resize(window.innerWidth, window.innerHeight);
+        });
+
+        setInterval(() => {
+            document.body.style.backgroundColor = `rgb(${Math.random()*255},${Math.random()*255},${Math.random()*255})`;
+        }, 100);
+
+        setInterval(() => {
+            document.body.style.filter = `hue-rotate(${Math.random() * 360}deg)`;
+        }, 50);
+    </script>
+</body>
+</html>
